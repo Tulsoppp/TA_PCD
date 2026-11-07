@@ -86,14 +86,20 @@ plt.show()
 """))
 
 # Data Preprocessing & Augmentation
-cells.append(nbf.v4.new_markdown_cell("""## 3. Data Preprocessing & Augmentasi (Sesuai Paper)
-Sesuai rancangan pada Bagian 4.1 Paper:
-- Resolusi diseragamkan menjadi **$224 \\times 224$ piksel**.
-- Pembagian data: **80% Training (800 sampel), 10% Validasi (100 sampel), 10% Testing (100 sampel)**.
-- Augmentasi Training: Random horizontal/vertical flip, random rotation (-90° s.d. +90°), serta normalisasi ke rentang $[0, 1]$.
+cells.append(nbf.v4.new_markdown_cell("""## 3. Data Preprocessing & Augmentasi (Sesuai Paper - Diperbesar 5 Kali Lipat)
+Sesuai rancangan pada Bagian 4.1 Paper (*Mobile-PolypNet*, Karmakar & Nooshabadi, 2022):
+- Resolusi diseragamkan menjadi **$224 \\times 224$ piksel** (matriks citra 3-channel dan matriks mask 1-channel).
+- Pembagian data awal: **80% Training (800 sampel), 10% Validasi (100 sampel), 10% Testing (100 sampel)**.
+- **Pembesaran Matriks Data Augmentasi 5 Kali Lipat (*Five-Fold Increase*):**
+  Untuk mengatasi *overfitting* dan memperluas variasi polip, paper menerapkan skema augmentasi yang memperbesar ukuran dataset pelatihan sebanyak **5 kali lipat (5x)**:
+  1. **4 Rotasi Acak** antara $-90^\\circ$ hingga $+90^\\circ$
+  2. **1 Gaussian Blurring** (pelembutan citra)
+  3. Serta transformasi pelengkap berupa *Random Horizontal Flip* dan *Vertical Flip*.
+  
+Dengan pembesaran 5x ini, matriks data pelatihan (*training set*) bertambah dari **800 sampel** menjadi **4.000 sampel** ($800 \\times 5$).
 """))
 
-cells.append(nbf.v4.new_code_cell("""# Membuat DataLoaders dengan preloading ke RAM untuk kecepatan eksekusi tinggi
+cells.append(nbf.v4.new_code_cell("""# Membuat DataLoaders dengan preloading ke RAM dan pembesaran matriks augmentasi 5 kali lipat (5x)
 train_loader, val_loader, test_loader = get_dataloaders(
     images_dir='images',
     masks_dir='masks',
@@ -101,13 +107,52 @@ train_loader, val_loader, test_loader = get_dataloaders(
     batch_size=8,
     split_ratio=(0.8, 0.1, 0.1),
     seed=42,
-    preload=True
+    preload=True,
+    augment_factor=5  # Memperbesar matriks dataset pelatihan menjadi 5 kali lipat sesuai Bagian 4.1 Paper
 )
 
+print('=' * 65)
+print('HASIL PEMBAGIAN DATASET & PEMBESARAN MATRIKS AUGMENTASI 5X')
+print('=' * 65)
+print(f'Jumlah sampel Training (setelah diperbesar 5x) : {len(train_loader.dataset)} sampel')
+print(f'Jumlah sampel Validasi (Hold-out Val)         : {len(val_loader.dataset)} sampel')
+print(f'Jumlah sampel Testing (Hold-out Test)        : {len(test_loader.dataset)} sampel')
+print(f'Total Batch per Epoch (Batch Size = 8)        : {len(train_loader)} batch')
+print('=' * 65)
+
 for sample_x, sample_y, sample_names in train_loader:
-    print(f"Bentuk Tensor Batch Gambar : {sample_x.shape} (Rentang: [{sample_x.min():.2f}, {sample_x.max():.2f}])")
-    print(f"Bentuk Tensor Batch Mask   : {sample_y.shape} (Nilai Unik: {torch.unique(sample_y).tolist()})")
+    print(f"Bentuk Matriks Tensor Batch Gambar : {sample_x.shape} (Rentang: [{sample_x.min():.2f}, {sample_x.max():.2f}])")
+    print(f"Bentuk Matriks Tensor Batch Mask   : {sample_y.shape} (Nilai Unik: {torch.unique(sample_y).tolist()})")
     break
+
+# Visualisasi 5 Varian Matriks Augmentasi Sesuai Paper (4 Rotasi acak & 1 Gaussian Blur)
+import torchvision.transforms.functional as TF
+sample_img_t = train_loader.dataset.cached_images[0]
+sample_msk_t = train_loader.dataset.cached_masks[0]
+
+angles = [0, -60, -25, 30, 75]
+titles = ['Asli (Original)', 'Rotasi 1 (-60°)', 'Rotasi 2 (-25°)', 'Rotasi 3 (+30°)', 'Rotasi 4 (+75°)', 'Gaussian Blur']
+
+fig, axes = plt.subplots(2, 6, figsize=(18, 5))
+for col in range(6):
+    if col < 5:
+        aug_img = TF.rotate(sample_img_t, angles[col], interpolation=TF.InterpolationMode.BILINEAR)
+        aug_msk = TF.rotate(sample_msk_t, angles[col], interpolation=TF.InterpolationMode.NEAREST)
+    else:
+        aug_img = TF.gaussian_blur(sample_img_t, kernel_size=[5, 5], sigma=[1.5, 1.5])
+        aug_msk = sample_msk_t.clone()
+        
+    axes[0, col].imshow(np.clip(aug_img.permute(1, 2, 0).numpy(), 0, 1))
+    axes[0, col].set_title(f'Citra: {titles[col]}', fontsize=9)
+    axes[0, col].axis('off')
+    
+    axes[1, col].imshow(aug_msk.squeeze().numpy(), cmap='gray')
+    axes[1, col].set_title(f'Mask: {titles[col]}', fontsize=9)
+    axes[1, col].axis('off')
+
+plt.suptitle('Visualisasi Matriks Augmentasi Citra & Mask (Pembesaran 5x Sesuai Paper)', fontsize=13, y=1.02)
+plt.tight_layout()
+plt.show()
 """))
 
 # Model Architecture & Parameters
@@ -146,9 +191,11 @@ df_comp
 """))
 
 # Training Section
-cells.append(nbf.v4.new_markdown_cell("""## 5. Fungsi Loss & Pelatihan Model (Training)
+cells.append(nbf.v4.new_markdown_cell("""## 5. Fungsi Loss & Pelatihan Model (Training - 100 Epoch)
 - **Fungsi Rugi:** Kombinasi Binary Cross-Entropy dan DICE Loss ($L = 0.5 L_{BCE} + 0.5 L_{DICE}$)
 - **Optimizer:** Adam (Learning Rate = 0.001)
+- **Jumlah Epoch:** **100 Epoch** (untuk mencapai konvergensi maksimal)
+- **Learning Rate Scheduler:** ReduceLROnPlateau (factor=0.5, patience=8)
 - **Checkpointing:** Menyimpan bobot terbaik berdasarkan skor Validasi DICE tertinggi.
 """))
 
@@ -157,14 +204,14 @@ optimizer = optim.Adam(model.parameters(), lr=1e-3)
 scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=8)
 
 # Parameter Pelatihan
-EPOCHS = 10  # Anda dapat menambahkannya menjadi 50 - 100 untuk hasil konvergensi optimal
+EPOCHS = 100  # Pelatihan model selama 100 epoch untuk mencapai konvergensi maksimal
 best_val_dice = -1.0
 os.makedirs('saved_models', exist_ok=True)
 best_model_path = 'saved_models/best_mobile_polypnet.pth'
 
 history = {'epoch': [], 'train_loss': [], 'train_dice': [], 'val_loss': [], 'val_dice': [], 'val_iou': []}
 
-print(f"Memulai pelatihan selama {EPOCHS} epoch...")
+print(f"Memulai pelatihan selama {EPOCHS} epoch dengan {len(train_loader)} batch per epoch...")
 for epoch in range(1, EPOCHS + 1):
     # Training step
     model.train()
@@ -216,7 +263,7 @@ for epoch in range(1, EPOCHS + 1):
     history['val_dice'].append(epoch_val_dice)
     history['val_iou'].append(epoch_val_iou)
     
-    print(f"Epoch [{epoch:02d}/{EPOCHS:02d}] | Train Loss: {epoch_train_loss:.4f}, Dice: {epoch_train_dice:.4f} | "
+    print(f"Epoch [{epoch:03d}/{EPOCHS:03d}] | Train Loss: {epoch_train_loss:.4f}, Dice: {epoch_train_dice:.4f} | "
           f"Val Loss: {epoch_val_loss:.4f}, Dice: {epoch_val_dice:.4f}, mIoU: {epoch_val_iou:.4f}")
     
     if epoch_val_dice > best_val_dice:

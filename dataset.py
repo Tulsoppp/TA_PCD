@@ -12,15 +12,16 @@ class PolypDataset(Dataset):
     Dataset loader for Kvasir-SEG (images and masks).
     Supports:
     - In-memory tensor caching for ultra-fast training on low-resource machines
-    - Paper augmentations implemented via high-speed PyTorch tensor operations:
+    - Paper augmentations implemented via PyTorch tensor operations:
       * Random horizontal flip
       * Random vertical flip
       * Random rotation (-90 to +90 degrees)
       * Random Gaussian blur
+    - Five-fold augmentation factor (augment_factor=5) matching Section 4.1 of the paper
     - Normalization to [0, 1]
     - Masks strictly binary {0, 1}
     """
-    def __init__(self, image_paths, mask_paths, img_size=224, is_train=True, augment=True, preload=True):
+    def __init__(self, image_paths, mask_paths, img_size=224, is_train=True, augment=True, preload=True, augment_factor=1):
         assert len(image_paths) == len(mask_paths), "Mismatch between images and masks count"
         self.image_paths = sorted(image_paths)
         self.mask_paths = sorted(mask_paths)
@@ -29,6 +30,7 @@ class PolypDataset(Dataset):
         self.is_train = is_train
         self.augment = augment and is_train
         self.preload = preload
+        self.augment_factor = augment_factor if self.is_train else 1
 
         if self.preload:
             desc = "Preloading Train Images" if is_train else "Preloading Val/Test Images"
@@ -56,18 +58,21 @@ class PolypDataset(Dataset):
             self.cached_masks = torch.stack(cached_msks)   # [N, 1, 224, 224]
 
     def __len__(self):
-        return len(self.image_paths)
+        return len(self.image_paths) * self.augment_factor
 
     def __getitem__(self, idx):
+        base_idx = idx % len(self.image_paths)
+        variant = (idx // len(self.image_paths)) if self.augment_factor > 1 else 0
+
         if self.preload:
-            img = self.cached_images[idx].clone()
-            msk = self.cached_masks[idx].clone()
+            img = self.cached_images[base_idx].clone()
+            msk = self.cached_masks[base_idx].clone()
         else:
-            img_bgr = cv2.imread(self.image_paths[idx])
+            img_bgr = cv2.imread(self.image_paths[base_idx])
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             img_rgb = cv2.resize(img_rgb, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
             
-            msk_gray = cv2.imread(self.mask_paths[idx], cv2.IMREAD_GRAYSCALE)
+            msk_gray = cv2.imread(self.mask_paths[base_idx], cv2.IMREAD_GRAYSCALE)
             msk_gray = cv2.resize(msk_gray, (self.img_size, self.img_size), interpolation=cv2.INTER_NEAREST)
             msk_bin = (msk_gray >= 128).astype(np.float32)
 
@@ -75,6 +80,9 @@ class PolypDataset(Dataset):
             msk = torch.from_numpy(msk_bin).unsqueeze(0).float()
 
         # High-speed PyTorch tensor augmentations (Train set only)
+        # Sesuai Paper Bagian 4.1:
+        # "we applied data augmentation to achieve a five-fold increase in the size of the dataset;
+        # four random rotations between -90° and 90°, and one Gaussian blurring."
         if self.augment:
             # Random horizontal flip
             if random.random() > 0.5:
@@ -86,20 +94,26 @@ class PolypDataset(Dataset):
                 img = torch.flip(img, dims=[1])
                 msk = torch.flip(msk, dims=[1])
 
-            # Random orthogonal rotation (0, 90, 180, 270 deg) - ultra fast zero-copy tensor op
-            k = random.choice([0, 1, 2, 3])
-            if k > 0:
-                img = torch.rot90(img, k, dims=[1, 2])
-                msk = torch.rot90(msk, k, dims=[1, 2])
+            # Rotasi acak (-90 s.d. +90 derajat)
+            if variant in [1, 2, 3, 4] or self.augment_factor == 1:
+                angle = random.uniform(-90.0, 90.0)
+                img = TF.rotate(img, angle, interpolation=TF.InterpolationMode.BILINEAR)
+                msk = TF.rotate(msk, angle, interpolation=TF.InterpolationMode.NEAREST)
 
-        return img, msk, self.filenames[idx]
+            # Gaussian blur untuk varian ke-5 (atau peluang acak)
+            if variant == 4 or (self.augment_factor == 1 and random.random() < 0.2):
+                img = TF.gaussian_blur(img, kernel_size=[3, 3], sigma=[1.0, 1.0])
+
+        return img, msk, self.filenames[base_idx]
 
 
 def get_dataloaders(images_dir='images', masks_dir='masks', img_size=224, batch_size=8, 
-                    split_ratio=(0.8, 0.1, 0.1), seed=42, num_workers=0, preload=True, max_samples=None):
+                    split_ratio=(0.8, 0.1, 0.1), seed=42, num_workers=0, preload=True, max_samples=None,
+                    augment_factor=5):
     """
     Creates reproducible Train, Validation, and Test DataLoaders.
     Default split: 80% train (800 images), 10% val (100 images), 10% test (100 images).
+    augment_factor: Multiplier for train dataset size (default 5, per paper Section 4.1).
     """
     valid_exts = ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')
     all_imgs = [os.path.join(images_dir, f) for f in os.listdir(images_dir) 
@@ -148,6 +162,8 @@ def get_dataloaders(images_dir='images', masks_dir='masks', img_size=224, batch_
     test_indices = indices[val_end:]
 
     print(f"Dataset split -> Train: {len(train_indices)}, Val: {len(val_indices)}, Test: {len(test_indices)}")
+    if augment_factor > 1:
+        print(f"Data augmentasi (Section 4.1 Paper): Matriks data training diperbesar {augment_factor}x -> {len(train_indices) * augment_factor} sampel")
 
     train_imgs = [paired_images[i] for i in train_indices]
     train_msks = [paired_masks[i] for i in train_indices]
@@ -158,9 +174,9 @@ def get_dataloaders(images_dir='images', masks_dir='masks', img_size=224, batch_
     test_imgs = [paired_images[i] for i in test_indices]
     test_msks = [paired_masks[i] for i in test_indices]
 
-    train_dataset = PolypDataset(train_imgs, train_msks, img_size=img_size, is_train=True, augment=True, preload=preload)
-    val_dataset = PolypDataset(val_imgs, val_msks, img_size=img_size, is_train=False, augment=False, preload=preload)
-    test_dataset = PolypDataset(test_imgs, test_msks, img_size=img_size, is_train=False, augment=False, preload=preload)
+    train_dataset = PolypDataset(train_imgs, train_msks, img_size=img_size, is_train=True, augment=True, preload=preload, augment_factor=augment_factor)
+    val_dataset = PolypDataset(val_imgs, val_msks, img_size=img_size, is_train=False, augment=False, preload=preload, augment_factor=1)
+    test_dataset = PolypDataset(test_imgs, test_msks, img_size=img_size, is_train=False, augment=False, preload=preload, augment_factor=1)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
