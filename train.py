@@ -119,7 +119,7 @@ def main():
     parser.add_argument('--masks_dir', type=str, default='masks', help='Path to masks directory')
     parser.add_argument('--img_size', type=int, default=224, help='Image resolution (default: 224)')
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size (default: 8 as in paper)')
-    parser.add_argument('--epochs', type=int, default=100, help='Max training epochs (default: 100)')
+    parser.add_argument('--epochs', type=int, default=145, help='Max training epochs (default: 145)')
     parser.add_argument('--lr', type=float, default=1e-3, help='Initial learning rate (default: 0.001)')
     parser.add_argument('--patience', type=int, default=25, help='Early stopping patience (default: 25)')
     parser.add_argument('--loss_type', type=str, default='bce_dice', choices=['bce_dice', 'dice'], help='Loss function')

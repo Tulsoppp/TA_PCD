@@ -191,10 +191,10 @@ df_comp
 """))
 
 # Training Section
-cells.append(nbf.v4.new_markdown_cell("""## 5. Fungsi Loss & Pelatihan Model (Training - 100 Epoch)
+cells.append(nbf.v4.new_markdown_cell("""## 5. Fungsi Loss & Pelatihan Model (Training - 145 Epoch)
 - **Fungsi Rugi:** Kombinasi Binary Cross-Entropy dan DICE Loss ($L = 0.5 L_{BCE} + 0.5 L_{DICE}$)
 - **Optimizer:** Adam (Learning Rate = 0.001)
-- **Jumlah Epoch:** **100 Epoch** (untuk mencapai konvergensi maksimal)
+- **Jumlah Epoch:** **145 Epoch** (untuk mencapai konvergensi maksimal)
 - **Learning Rate Scheduler:** ReduceLROnPlateau (factor=0.5, patience=8)
 - **Checkpointing:** Menyimpan bobot terbaik berdasarkan skor Validasi DICE tertinggi.
 """))
@@ -204,7 +204,7 @@ optimizer = optim.Adam(model.parameters(), lr=1e-3)
 scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=8)
 
 # Parameter Pelatihan
-EPOCHS = 100  # Pelatihan model selama 100 epoch untuk mencapai konvergensi maksimal
+EPOCHS = 145  # Pelatihan model selama 145 epoch untuk mencapai konvergensi maksimal
 best_val_dice = -1.0
 os.makedirs('saved_models', exist_ok=True)
 best_model_path = 'saved_models/best_mobile_polypnet.pth'
